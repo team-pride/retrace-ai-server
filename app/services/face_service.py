@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image
 
 from app.core.config import settings
+from app.services.model_loader import load_deepface
 
 
 class NoFaceDetectedError(Exception):
@@ -24,16 +25,6 @@ class NoFaceDetectedError(Exception):
 
 class MultipleFacesDetectedError(Exception):
     """이미지에서 얼굴이 2개 이상 검출된 경우 (등록 시에는 1인만 허용)"""
-
-
-def _load_deepface():
-    try:
-        from deepface import DeepFace
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "deepface가 설치되어 있지 않습니다. requirements.txt를 설치해주세요."
-        ) from exc
-    return DeepFace
 
 
 def _bytes_to_ndarray(image_bytes: bytes) -> np.ndarray:
@@ -46,7 +37,7 @@ def extract_embedding(image_bytes: bytes, *, allow_multiple: bool = False) -> li
 
     원본 이미지는 디스크에 저장하지 않고 메모리에서만 처리한다 (원본 셀피 미저장 원칙).
     """
-    deepface = _load_deepface()
+    deepface = load_deepface()
     img_array = _bytes_to_ndarray(image_bytes)
 
     try:

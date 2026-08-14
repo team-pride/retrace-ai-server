@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     # 코사인 거리 임계값: 이 값 이하면 본인으로 판정. 초기값이며 추후 실측 데이터로 튜닝 필요.
     FACE_MATCH_THRESHOLD: float = 0.40
 
+    # --- 사진 판정 설정 (우선순위 2) ---
+    # 각도(도): PASS 이하는 통과, PASS~EXCLUDE는 조건부, EXCLUDE 초과는 제외
+    PHOTO_ANGLE_PASS_DEG: float = 8.0
+    PHOTO_ANGLE_EXCLUDE_DEG: float = 15.0
+    # 블러(라플라시안 분산): 낮을수록 흐림. THRESHOLD 이상이면 통과.
+    PHOTO_BLUR_VARIANCE_THRESHOLD: float = 80.0
+    # 같은 photo_key로 판정 실패(exclude) 시 허용 재시도 횟수
+    PHOTO_MAX_RETRY: int = 3
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AI_", extra="ignore")
 
 
