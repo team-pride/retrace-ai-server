@@ -31,6 +31,8 @@ async def register_face(user_id: str, files: List[UploadFile] = File(...)):
             )
         except face_service.MultipleFacesDetectedError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        except face_service.InvalidImageError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
         embeddings.append(embedding)
 
     reference_vector = face_service.average_embeddings(embeddings)
@@ -55,6 +57,8 @@ async def verify_face(user_id: str, file: UploadFile = File(...)):
     except face_service.NoFaceDetectedError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="얼굴을 찾지 못했습니다.")
     except face_service.MultipleFacesDetectedError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except face_service.InvalidImageError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
     is_match, distance = face_service.is_same_person(embedding, reference_vector)

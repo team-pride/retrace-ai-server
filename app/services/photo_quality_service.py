@@ -10,16 +10,15 @@ api/routes/photo.py 에서 처리한다. 이 모듈은 순수 판정 로직만 �
 """
 from __future__ import annotations
 
-import io
 import math
 from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
-from PIL import Image
 
 from app.core.config import settings
 from app.services.face_service import MultipleFacesDetectedError, NoFaceDetectedError
+from app.services.image_utils import bytes_to_ndarray
 from app.services.model_loader import load_deepface
 
 
@@ -35,11 +34,6 @@ class PhotoGradeResult:
     grade: str  # "pass" | "conditional" | "exclude"
     reasons: list[str] = field(default_factory=list)
     metrics: PhotoMetrics | None = None
-
-
-def _bytes_to_ndarray(image_bytes: bytes) -> np.ndarray:
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    return np.array(image)
 
 
 def _compute_roll_angle(left_eye, right_eye) -> float:
@@ -73,7 +67,7 @@ def detect_and_measure(image_bytes: bytes) -> PhotoMetrics:
     MultipleFacesDetectedError를 던진다 (face_service와 동일한 예외 재사용).
     """
     deepface = load_deepface()
-    img_array = _bytes_to_ndarray(image_bytes)
+    img_array = bytes_to_ndarray(image_bytes)  # InvalidImageError는 호출부에서 처리
 
     try:
         faces = deepface.extract_faces(

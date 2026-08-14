@@ -9,14 +9,23 @@ DeepFace는 최초 호출 시점에 지연 임포트한다. 모델 가중치 다
 """
 from __future__ import annotations
 
-import io
 from typing import Sequence
 
 import numpy as np
-from PIL import Image
 
 from app.core.config import settings
+from app.services.image_utils import InvalidImageError, bytes_to_ndarray
 from app.services.model_loader import load_deepface
+
+__all__ = [
+    "InvalidImageError",
+    "NoFaceDetectedError",
+    "MultipleFacesDetectedError",
+    "extract_embedding",
+    "average_embeddings",
+    "cosine_distance",
+    "is_same_person",
+]
 
 
 class NoFaceDetectedError(Exception):
@@ -27,18 +36,13 @@ class MultipleFacesDetectedError(Exception):
     """이미지에서 얼굴이 2개 이상 검출된 경우 (등록 시에는 1인만 허용)"""
 
 
-def _bytes_to_ndarray(image_bytes: bytes) -> np.ndarray:
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    return np.array(image)
-
-
 def extract_embedding(image_bytes: bytes, *, allow_multiple: bool = False) -> list[float]:
     """이미지 바이트에서 얼굴 임베딩 벡터를 추출한다.
 
     원본 이미지는 디스크에 저장하지 않고 메모리에서만 처리한다 (원본 셀피 미저장 원칙).
     """
     deepface = load_deepface()
-    img_array = _bytes_to_ndarray(image_bytes)
+    img_array = bytes_to_ndarray(image_bytes)  # InvalidImageError는 호출부에서 처리
 
     try:
         results = deepface.represent(
