@@ -157,6 +157,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# 로컬 얼굴 벡터 저장소 (실제 데이터는 커밋하지 않음)
+/data/*
+!/data/.gitkeep
+
 # Spyder project settings
 .spyderproject
 .spyproject

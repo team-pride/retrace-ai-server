@@ -1,0 +1,17 @@
+services:
+  ai-server:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      # DeepFace가 최초 실행 시 모델 가중치를 다운로드하는데, 컨테이너를
+      # 재생성할 때마다 다시 받지 않도록 캐시를 볼륨으로 고정한다.
+      - deepface-weights:/root/.deepface
+    env_file:
+      - .env
+    environment:
+      - AI_DATA_DIR=/app/data
+
+volumes:
+  deepface-weights:
