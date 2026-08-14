@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     # 같은 photo_key로 판정 실패(exclude) 시 허용 재시도 횟수
     PHOTO_MAX_RETRY: int = 3
 
+    # --- 정규화 설정 (우선순위 3) ---
+    NORM_OUTPUT_WIDTH: int = 400
+    NORM_OUTPUT_HEIGHT: int = 500
+    # 출력 이미지에서 왼쪽 눈의 상대 x 위치 (오른쪽 눈은 1 - 이 값에 위치)
+    NORM_LEFT_EYE_X: float = 0.35
+    # 출력 이미지에서 두 눈의 상대 y 위치
+    NORM_EYE_Y: float = 0.35
+    # 정렬 후 크롭 범위 판정 여유(px). 0이면 원본을 조금이라도 벗어나면 바로 제외.
+    NORM_CROP_MARGIN_PX: float = 0.0
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AI_", extra="ignore")
 
 

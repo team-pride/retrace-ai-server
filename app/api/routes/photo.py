@@ -1,11 +1,47 @@
+import base64
+
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.core.config import settings
-from app.schemas.photo import PhotoEvaluateResponse
-from app.services import face_service, photo_quality_service
+from app.schemas.photo import PhotoEvaluateResponse, PhotoNormalizeResponse
+from app.services import face_service, normalization_service, photo_quality_service
 from app.services.retry_tracker import get_retry_tracker
 
 router = APIRouter(prefix="/photo", tags=["photo"])
+
+
+@router.post("/normalize", response_model=PhotoNormalizeResponse)
+async def normalize_photo(file: UploadFile = File(...)):
+    """사진 정규화 (우선순위 3).
+
+    눈 중심선 수평 정렬 + 눈동자 간 거리 기준 크기 정렬 + 눈 흰자 기준 색조 보정을
+    적용한다. 정렬 후 목표 크롭 영역이 원본 이미지 범위를 벗어나면 grade="exclude"로
+    제외 처리한다 (예외를 던지지 않고 응답으로 알려줘서 클라이언트가 재촬영 안내를
+    바로 보여줄 수 있게 한다).
+    """
+    content = await file.read()
+    try:
+        result = normalization_service.normalize_face(content)
+    except face_service.NoFaceDetectedError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="얼굴을 찾지 못했습니다.")
+    except face_service.MultipleFacesDetectedError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except face_service.InvalidImageError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except normalization_service.CropOutOfBoundsError as exc:
+        return PhotoNormalizeResponse(grade="exclude", reasons=[str(exc)])
+
+    png_bytes = normalization_service.image_to_png_bytes(result.image)
+    image_b64 = base64.b64encode(png_bytes).decode("ascii")
+
+    return PhotoNormalizeResponse(
+        grade="ok",
+        reasons=[],
+        rotation_deg=round(result.rotation_deg, 2),
+        scale_factor=round(result.scale_factor, 3),
+        eye_distance_px=round(result.eye_distance_px, 1),
+        image_base64=image_b64,
+    )
 
 
 @router.post("/evaluate", response_model=PhotoEvaluateResponse)
@@ -40,6 +76,8 @@ async def evaluate_photo(photo_key: str, file: UploadFile = File(...)):
     except face_service.NoFaceDetectedError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="얼굴을 찾지 못했습니다.")
     except face_service.MultipleFacesDetectedError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except face_service.InvalidImageError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
     result = photo_quality_service.grade_metrics(metrics)
