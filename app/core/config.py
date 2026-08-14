@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # 정렬 후 크롭 범위 판정 여유(px). 0이면 원본을 조금이라도 벗어나면 바로 제외.
     NORM_CROP_MARGIN_PX: float = 0.0
 
+    # --- 지표/곡선 설정 (우선순위 4) ---
+    # 곡선을 생성하려면 연도별 최소 이 장수 이상 통과해야 한다.
+    CURVE_MIN_PHOTOS_PER_YEAR: int = 3
+    # 곡선을 생성하려면 전체 통과 장수가 이 값 이상이어야 한다.
+    CURVE_MIN_TOTAL_PHOTOS: int = 20
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AI_", extra="ignore")
 
 

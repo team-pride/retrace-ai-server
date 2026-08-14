@@ -9,3 +9,13 @@ opencv-python-headless==4.10.0.84
 tf-keras==2.17.0
 numpy==1.26.4
 Pillow==11.0.0
+
+# 지표 추출 - 턱선/눈꺼풀/입가 랜드마크 (우선순위 4)
+# dlib은 소스에서 빌드되며(사전 빌드된 wheel이 없음) 설치에 몇 분 걸릴 수 있다.
+# cmake + C++ 컴파일러가 필요하다 (macOS는 Xcode Command Line Tools로 충족됨).
+dlib==20.0.1
+# face_recognition_models 패키지 자체는 pkg_resources(구식 setuptools API, 최신
+# setuptools에선 아예 빠짐)에 의존하지만, indicator_service.py에서 이 패키지를
+# import하지 않고 모델 파일 경로만 직접 찾아 쓰기 때문에 pkg_resources 유무와
+# 무관하게 동작한다.
+face_recognition_models==0.3.0

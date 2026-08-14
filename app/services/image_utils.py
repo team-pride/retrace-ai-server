@@ -15,9 +15,15 @@ Orientation 태그로만 "이렇게 회전해서 보여줘"라고 표시하는 �
 from __future__ import annotations
 
 import io
+from datetime import date
 
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
+
+# EXIF 태그 번호 (PIL의 ExifTags 상수와 동일한 값)
+_EXIF_SUBIFD_TAG = 0x8769  # Exif IFD Pointer — DateTimeOriginal은 이 서브 IFD 안에 있음
+_EXIF_DATETIME_ORIGINAL = 0x9003
+_TIFF_DATETIME = 0x0132  # IFD0의 DateTime (촬영일이 아니라 마지막 수정일에 가까움, 최후 fallback)
 
 
 class InvalidImageError(Exception):
@@ -41,3 +47,43 @@ def bytes_to_ndarray(image_bytes: bytes) -> np.ndarray:
             "이미지 파일을 처리하는 중 오류가 발생했습니다. 파일이 손상되었을 수 있습니다."
         ) from exc
     return np.array(image)
+
+
+def extract_captured_date(image_bytes: bytes) -> date | None:
+    """이미지의 EXIF 촬영일(DateTimeOriginal)을 읽어 date로 반환한다.
+
+    카톡/에어드랍 등으로 전달돼 EXIF가 제거된 사진이나 스크린샷처럼 애초에
+    EXIF가 없는 경우 None을 반환한다 (기능명세서 리스크 항목: "촬영일 소실").
+    호출부에서 None이면 판정 대상에서 제외하고 사유를 기록해야 한다.
+    """
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        exif = image.getexif()
+    except (UnidentifiedImageError, OSError):
+        return None
+
+    date_str = None
+    try:
+        exif_ifd = exif.get_ifd(_EXIF_SUBIFD_TAG)
+        date_str = exif_ifd.get(_EXIF_DATETIME_ORIGINAL)
+    except (KeyError, AttributeError, ValueError):
+        date_str = None
+
+    if not date_str:
+        # 실제 카메라 사진은 DateTimeOriginal이 Exif 서브 IFD 안에 중첩되어
+        # 있지만, PIL로 exif를 직접 만들어 저장하면(테스트용 이미지 등)
+        # 서브 IFD 없이 최상위에 그대로 저장되는 경우가 있어 여기서도 확인한다.
+        date_str = exif.get(_EXIF_DATETIME_ORIGINAL)
+
+    if not date_str:
+        date_str = exif.get(_TIFF_DATETIME)
+
+    if not date_str:
+        return None
+
+    try:
+        # EXIF 날짜 형식: "YYYY:MM:DD HH:MM:SS"
+        date_part = str(date_str).split(" ")[0]
+        return date.fromisoformat(date_part.replace(":", "-"))
+    except ValueError:
+        return None
