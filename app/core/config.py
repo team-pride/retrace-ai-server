@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     # 곡선을 생성하려면 전체 통과 장수가 이 값 이상이어야 한다.
     CURVE_MIN_TOTAL_PHOTOS: int = 20
 
+    # --- 관리 효과 판정 설정 (우선순위 5) ---
+    # 예측선(추세선)을 추정하려면 마커 이전 구간에 최소 이만큼의 지표 기록이 필요하다.
+    EFFECT_MIN_POINTS_BEFORE_MARKER: int = 3
+    # 실제 곡선과 예측선을 비교하려면 마커 이후 구간에 최소 이만큼의 지표 기록이 필요하다.
+    EFFECT_MIN_POINTS_AFTER_MARKER: int = 2
+    # 마커 이후 실측치가 예측선에서 벗어난 정도가 "데이터 흔들림 범위"(마커 이전
+    # 구간의 잔차 표준편차)의 이 배수를 넘으면 "관찰됨"으로 판정한다.
+    EFFECT_NOISE_THRESHOLD_FACTOR: float = 1.5
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AI_", extra="ignore")
 
 

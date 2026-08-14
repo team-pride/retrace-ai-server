@@ -3,7 +3,8 @@
 RETRACE — 거울이 기억하지 못하는 얼굴의 변화를, 이미 사진첩에 쌓인 과거 사진으로
 복원해 보여주는 서비스의 AI 서버 파트 (Python, FastAPI).
 사용자 사진에서 본인 얼굴만 골라내고, 비교 가능한 사진만 판정·정규화한 뒤,
-기하 지표를 뽑아 시계열 변화 곡선을 만드는 역할을 한다.
+기하 지표를 뽑아 시계열 변화 곡선을 만들고, 관리 마커를 기준으로 관리 효과가
+관찰되는지까지 판정하는 역할을 한다.
 
 ## 우선순위 (기능명세서 기준)
 
@@ -11,7 +12,7 @@ RETRACE — 거울이 기억하지 못하는 얼굴의 변화를, 이미 사진�
 2. 사진 판정 — 각도/블러/품질 판정, 재시도 로직 *(구현 완료)*
 3. 정규화 — 눈동자 간 거리 기준 크기 정렬 + 눈 중심선 수평 정렬 + 흰자 기준 색조 보정 *(구현 완료)*
 4. 지표/곡선 — 얼굴 폭·턱선 각도·눈꺼풀 높이·입가 각도 계산 + 시계열 곡선 + 변화점(방향 전환) 자동 탐지 *(구현 완료)*
-5. 판정/해석 — 관리 마커 기준 예측선 vs 실제 곡선 비교, 관찰됨/관찰되지 않음/판단 보류 판정 *(미구현)*
+5. 판정/해석 — 관리 마커 기준 예측선 vs 실제 곡선 비교, 관찰됨/관찰되지 않음/판단 보류 판정 *(구현 완료)*
 
 ## 기술 스택
 
@@ -83,6 +84,9 @@ docker compose up --build
 | 4 | POST | `/api/v1/indicator/extract?user_id={id}&photo_key={key}&captured_at={YYYY-MM-DD}` | 사진 한 장에서 얼굴 폭/턱선 각도/눈꺼풀 높이/입가 각도 4종 지표를 계산해 저장 |
 | 4 | POST | `/api/v1/indicator/extract-batch?user_id={id}&fallback_captured_at={YYYY-MM-DD}` | 사진 여러 장을 한 번에 업로드 → 각 파일의 EXIF 촬영일을 자동으로 읽어 지표를 일괄 추출/저장. EXIF가 없는 파일은 `fallback_captured_at`을 쓰거나 건너뜀. 곡선 기능 테스트용으로 20장 이상 한 번에 넣을 때 유용 |
 | 4 | GET | `/api/v1/indicator/curve?user_id={id}&indicator={지표명}` | 저장된 지표로 시계열 곡선 + 변화점(방향 전환 지점) 계산. 표본 부족 시 `eligible: false`와 부족한 조건 안내 |
+| 5 | POST | `/api/v1/marker/register?user_id={id}&marker_date={YYYY-MM-DD}&note={문장}` | 관리 마커(시술/루틴 시작 등) 등록. 종류는 분류하지 않고 자유 문장(note) 그대로 저장 |
+| 5 | GET | `/api/v1/marker/list?user_id={id}` | 등록된 관리 마커 목록 조회 |
+| 5 | GET | `/api/v1/effect/judge?user_id={id}&indicator={지표명}&marker_id={id}` | 마커 이전 추세를 연장한 예측선과 실제 곡선을 비교해 `observed`/`not_observed`/`pending` 3가지로 변화 관찰 여부 판정 |
 
 ## 프로젝트 구조
 
@@ -90,7 +94,7 @@ docker compose up --build
 app/
   main.py              FastAPI 엔트리포인트
   core/config.py        환경설정 (임계값 등)
-  api/routes/           API 라우터 (health, face, photo, indicator)
+  api/routes/           API 라우터 (health, face, photo, indicator, marker, effect)
   schemas/               요청/응답 스키마
   services/
     face_service.py         얼굴 임베딩 추출/비교 로직 (DeepFace 래핑)
@@ -101,7 +105,9 @@ app/
     indicator_service.py     dlib 68점 랜드마크로 지표 4종 계산 (우선순위 4)
     curve_service.py         지표 시계열 곡선 구성 + 변화점 자동 탐지 (우선순위 4)
     indicator_store.py       사용자별 지표 기록 저장소 (로컬 JSON)
-    image_utils.py           이미지 디코딩 공통 유틸 (손상 파일 방어 + EXIF 회전 보정)
+    marker_store.py          사용자별 관리 마커 저장소 (로컬 JSON, 우선순위 5)
+    effect_service.py        마커 기준 예측선 vs 실제 곡선 비교 판정 (우선순위 5)
+    image_utils.py           이미지 디코딩 공통 유틸 (손상 파일 방어 + EXIF 회전/촬영일 추출)
     model_loader.py          DeepFace 지연 로딩
 tests/                    pytest 테스트
 data/                     로컬 데이터 파일 (git에는 커밋 안 됨)
@@ -113,9 +119,16 @@ data/                     로컬 데이터 파일 (git에는 커밋 안 됨)
 - [x] 우선순위 2: 사진 판정 (각도/블러, 재시도 로직)
 - [x] 우선순위 3: 정규화 (크기/수평/색조 보정)
 - [x] 우선순위 4: 지표/곡선 계산 (dlib 랜드마크 기반)
-- [ ] 우선순위 5: 판정/해석 (관리 마커 기준 예측선 vs 실제 곡선 비교)
+- [x] 우선순위 5: 판정/해석 (관리 마커 기준 예측선 vs 실제 곡선 비교)
 - [ ] `FACE_MATCH_THRESHOLD` 실측 데이터로 튜닝
-- [ ] 기준 벡터/지표 저장소를 DB 연동으로 교체 (현재는 로컬 JSON)
+- [ ] 기준 벡터/지표/마커 저장소를 DB 연동으로 교체 (현재는 로컬 JSON)
 - [ ] 지표 계산 랜드마크 기준점(턱선 4/12번, 입꼬리 48/54번 등)이 실제 사진에서도
       타당한지 실측 데이터로 검증 — 지금은 dlib 68점 표준 인덱스를 기반으로 한
       1차 정의라 팀 리뷰가 필요함
+- [ ] 우선순위 5의 "데이터 흔들림 범위"(마커 이전 구간 잔차 표준편차)와
+      `EFFECT_NOISE_THRESHOLD_FACTOR`(현재 1.5배) 기준이 실측 데이터로 타당한지
+      검증 필요 — 지금은 명세서 문구를 그대로 구현한 1차 정의
+- [ ] 기능명세서 4.1(변화 시점 질문 + 자유 문장에서 마커 종류/날짜 자동 추출)과
+      4.2(해석 카드 생성)는 자연어 처리/LLM 영역이라 이 AI 서버 범위에서 제외함 —
+      지금 `/api/v1/marker/register`는 프론트/사용자가 이미 정한 날짜와 문장을
+      그대로 받아 저장만 한다
