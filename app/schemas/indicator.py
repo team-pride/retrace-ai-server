@@ -56,3 +56,4 @@ class BatchExtractResponse(BaseModel):
     skipped_count: int
     failed_count: int
     results: list[BatchExtractItemResponse]
+    year_notices: list[str] = []  # 연도별 최소 권장 장수(BATCH_MIN_PHOTOS_PER_YEAR) 미달 안내

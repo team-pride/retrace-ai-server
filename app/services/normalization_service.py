@@ -16,12 +16,14 @@ from __future__ import annotations
 import io
 import math
 from dataclasses import dataclass
+from typing import Sequence
 
 import cv2
 import numpy as np
 from PIL import Image
 
 from app.core.config import settings
+from app.services import face_service
 from app.services.face_service import MultipleFacesDetectedError, NoFaceDetectedError
 from app.services.image_utils import bytes_to_ndarray
 from app.services.model_loader import load_deepface
@@ -37,6 +39,8 @@ class NormalizationResult:
     scale_factor: float
     rotation_deg: float
     eye_distance_px: float
+    grade: str = "ok"  # "ok" | "conditional" (흰자 부족으로 색보정 생략)
+    white_balance_skipped: bool = False
 
 
 def image_to_png_bytes(image: np.ndarray) -> bytes:
@@ -127,12 +131,21 @@ def _assert_crop_within_bounds(M, orig_width: int, orig_height: int) -> None:
         )
 
 
-def _white_balance_via_eye_patches(image: np.ndarray, left_eye_out, right_eye_out, patch_radius: int = 12) -> np.ndarray:
+def _white_balance_via_eye_patches(
+    image: np.ndarray, left_eye_out, right_eye_out, patch_radius: int = 12
+) -> tuple[np.ndarray, bool]:
     """눈 흰자(sclera)를 근사하는 밝은 픽셀을 눈 주변에서 샘플링해 화이트 밸런스를 보정한다.
 
     두 눈 주변 패치에서 밝기 상위 10% 픽셀을 sclera 근사치로 보고, 그 평균이
     무채색(회색)이 되도록 채널별 게인을 계산해 이미지 전체에 적용한다.
     극단적인 보정을 막기 위해 게인은 0.7~1.4로 clip한다.
+
+    흰자로 볼만한 밝은 픽셀 표본이 충분히 확보되지 않으면(눈이 감겼거나,
+    안경 반사, 얼굴이 이미지 경계에 걸쳐 패치가 잘리는 경우 등) 색보정을
+    건너뛰고 원본을 그대로 반환한다 (기능명세서 2.3: "흰자 영역이 충분히
+    확보되지 않으면 색온도 보정을 건너뛰고 조건부 등급으로 낮춘다").
+
+    반환값: (이미지, 보정을_건너뛰었는지)
     """
     h, w = image.shape[:2]
     samples = []
@@ -144,48 +157,71 @@ def _white_balance_via_eye_patches(image: np.ndarray, left_eye_out, right_eye_ou
             samples.append(patch.reshape(-1, 3))
 
     if not samples:
-        return image
+        return image, True
 
     all_pixels = np.concatenate(samples, axis=0).astype(np.float64)
+    if all_pixels.shape[0] < settings.NORM_MIN_WHITE_SAMPLE_PIXELS:
+        return image, True
+
     brightness = all_pixels.mean(axis=1)
     threshold = np.percentile(brightness, 90)
     bright_pixels = all_pixels[brightness >= threshold]
     if bright_pixels.size == 0:
-        bright_pixels = all_pixels
+        return image, True
 
     reference = bright_pixels.mean(axis=0)  # [R, G, B]
     target = reference.mean()
     if target <= 1:
-        return image
+        return image, True
 
     gains = np.clip(target / np.clip(reference, 1, None), 0.7, 1.4)
     corrected = image.astype(np.float64) * gains
-    return np.clip(corrected, 0, 255).astype(np.uint8)
+    return np.clip(corrected, 0, 255).astype(np.uint8), False
 
 
-def normalize_face(image_bytes: bytes) -> NormalizationResult:
-    """얼굴을 검출해서 정렬(회전+스케일) → 크롭 범위 검증 → 화이트 밸런스 보정까지 수행한다."""
+def _resolve_face_area(image_bytes: bytes, img_array: np.ndarray, reference_vector: Sequence[float] | None) -> dict:
+    """검출 대상 얼굴의 facial_area(위치 정보)를 결정한다.
+
+    reference_vector가 주어지면(=본인 기준 벡터가 등록된 사용자 컨텍스트)
+    얼굴이 여러 개 검출돼도 예외를 던지지 않고 기준 벡터와 가장 가까운
+    얼굴 하나를 골라 사용한다 (기준 벡터와 거리가 너무 멀면 본인이 아닌
+    것으로 보고 PersonMismatchError). reference_vector가 없으면(온보딩
+    이전 등, 비교 대상이 없는 경우) 기존처럼 얼굴이 정확히 하나여야 한다.
+    """
+    if reference_vector is not None:
+        faces = face_service.detect_all_faces(image_bytes)
+        best = face_service.select_matching_face(faces, reference_vector)
+        return best.facial_area
+
     deepface = load_deepface()
-    img_array = bytes_to_ndarray(image_bytes)  # InvalidImageError는 호출부에서 처리
-
-    try:
-        faces = deepface.extract_faces(
-            img_path=img_array,
-            detector_backend=settings.FACE_DETECTOR_BACKEND,
-            enforce_detection=True,
-            align=False,
-        )
-    except ValueError as exc:
-        raise NoFaceDetectedError(str(exc)) from exc
-
+    faces = deepface.extract_faces(
+        img_path=img_array,
+        detector_backend=settings.FACE_DETECTOR_BACKEND,
+        enforce_detection=True,
+        align=False,
+    )
     if not faces:
         raise NoFaceDetectedError("얼굴을 검출하지 못했습니다.")
     if len(faces) > 1:
         raise MultipleFacesDetectedError(
             f"얼굴이 {len(faces)}개 검출되었습니다. 한 명만 나오도록 촬영해주세요."
         )
+    return faces[0]["facial_area"]
 
-    area = faces[0]["facial_area"]
+
+def normalize_face(image_bytes: bytes, reference_vector: Sequence[float] | None = None) -> NormalizationResult:
+    """얼굴을 검출해서 정렬(회전+스케일) → 크롭 범위 검증 → 화이트 밸런스 보정까지 수행한다.
+
+    reference_vector를 넘기면 다중 얼굴 중 본인 기준 벡터와 가장 가까운
+    얼굴을 선택하고, 그 얼굴마저 임계값을 넘으면 PersonMismatchError를 던진다.
+    """
+    img_array = bytes_to_ndarray(image_bytes)  # InvalidImageError는 호출부에서 처리
+
+    try:
+        area = _resolve_face_area(image_bytes, img_array, reference_vector)
+    except ValueError as exc:
+        raise NoFaceDetectedError(str(exc)) from exc
+
     left_eye = area.get("left_eye")
     right_eye = area.get("right_eye")
     if not left_eye or not right_eye:
@@ -205,11 +241,13 @@ def normalize_face(image_bytes: bytes) -> NormalizationResult:
         settings.NORM_OUTPUT_WIDTH * (1 - settings.NORM_LEFT_EYE_X),
         settings.NORM_OUTPUT_HEIGHT * settings.NORM_EYE_Y,
     )
-    balanced = _white_balance_via_eye_patches(aligned, left_eye_out, right_eye_out)
+    balanced, white_balance_skipped = _white_balance_via_eye_patches(aligned, left_eye_out, right_eye_out)
 
     return NormalizationResult(
         image=balanced,
         scale_factor=scale,
         rotation_deg=angle,
         eye_distance_px=eye_distance,
+        grade="conditional" if white_balance_skipped else "ok",
+        white_balance_skipped=white_balance_skipped,
     )

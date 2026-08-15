@@ -64,7 +64,28 @@ def test_crop_within_bounds_for_large_source():
 def test_white_balance_reduces_color_cast():
     img = np.full((100, 100, 3), 150, dtype=np.uint8)
     img[:, :, 0] = 200  # R 채널만 높여서 붉은 색조를 만듦
-    corrected = _white_balance_via_eye_patches(img, (50, 50), (50, 50), patch_radius=20)
+    corrected, skipped = _white_balance_via_eye_patches(img, (50, 50), (50, 50), patch_radius=20)
 
+    assert skipped is False
     r, g = int(corrected[:, :, 0].mean()), int(corrected[:, :, 1].mean())
     assert abs(r - g) < abs(200 - 150)
+
+
+def test_white_balance_skipped_when_sample_too_small():
+    # 흰자 근사 패치가 이미지 경계(모서리)에 걸려 아주 작게 잘리면 표본이
+    # NORM_MIN_WHITE_SAMPLE_PIXELS(기본 30)에 못 미쳐 보정을 건너뛰어야 한다.
+    img = np.full((100, 100, 3), 150, dtype=np.uint8)
+    img[:, :, 0] = 200
+    corrected, skipped = _white_balance_via_eye_patches(img, (0, 0), (0, 0), patch_radius=1)
+
+    assert skipped is True
+    assert np.array_equal(corrected, img)  # 보정 없이 원본 그대로
+
+
+def test_white_balance_skipped_when_no_samples_at_all():
+    # 눈 위치가 이미지 밖이라 패치 자체가 비면(size=0) 보정을 건너뛰어야 한다.
+    img = np.full((100, 100, 3), 150, dtype=np.uint8)
+    corrected, skipped = _white_balance_via_eye_patches(img, (-500, -500), (-500, -500), patch_radius=5)
+
+    assert skipped is True
+    assert np.array_equal(corrected, img)

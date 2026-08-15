@@ -2,7 +2,7 @@ from pydantic import BaseModel
 
 
 class PhotoNormalizeResponse(BaseModel):
-    grade: str  # "ok" | "exclude"
+    grade: str  # "ok" | "conditional" | "exclude"
     reasons: list[str]
     rotation_deg: float | None = None
     scale_factor: float | None = None
@@ -14,7 +14,8 @@ class PhotoEvaluateResponse(BaseModel):
     photo_key: str
     grade: str  # "pass" | "conditional" | "exclude"
     reasons: list[str]
-    angle_deg: float
+    yaw_deg: float
+    pitch_deg: float
     blur_variance: float
     detector_confidence: float
     attempt_count: int
