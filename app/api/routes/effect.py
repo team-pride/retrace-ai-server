@@ -38,6 +38,7 @@ async def judge_effect(user_id: str, indicator: str, marker_id: str):
         after_count=result.after_count,
         noise_baseline=round(result.noise_baseline, 6) if result.noise_baseline is not None else None,
         mean_deviation=round(result.mean_deviation, 6) if result.mean_deviation is not None else None,
+        confidence=result.confidence,
         prediction_line=[
             PredictionPointResponse(
                 captured_at=p.captured_at.isoformat(), predicted_value=round(p.predicted_value, 4)

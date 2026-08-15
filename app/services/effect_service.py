@@ -11,6 +11,9 @@
 - 마커 이전/이후 표본이 부족하면(EFFECT_MIN_POINTS_* 미달) "판단 보류".
 - 의료적 효과(좋아짐/나빠짐) 단정은 하지 않는다 — "그대로 갔을 경우"와
   달라졌는지 여부만 본다 (기능명세서 5 비즈니스 규칙).
+- 기능명세서 5.1 데이터 규칙("판정 결과는 마커 식별자, 지표 종류, 결과 상태,
+  차이 값, 신뢰도로 저장한다")에 맞춰 판정에 사용된 표본 수(마커 전+후) 기준
+  구간 신뢰도(low/medium/high)도 함께 계산한다.
 """
 from __future__ import annotations
 
@@ -55,8 +58,17 @@ class EffectResult:
     after_count: int = 0
     noise_baseline: float | None = None
     mean_deviation: float | None = None
+    confidence: str | None = None  # "high" | "medium" | "low"
     prediction_line: list[PredictionPoint] = field(default_factory=list)
     actual_after: list[ObservedPoint] = field(default_factory=list)
+
+
+def _confidence_level(total_count: int) -> str:
+    if total_count >= settings.EFFECT_CONFIDENCE_HIGH_MIN_TOTAL:
+        return "high"
+    if total_count >= settings.EFFECT_CONFIDENCE_MEDIUM_MIN_TOTAL:
+        return "medium"
+    return "low"
 
 
 def _linear_fit(xs: list[float], ys: list[float]) -> tuple[float, float]:
@@ -145,6 +157,7 @@ def judge_effect(user_id: str, indicator: str, marker_id: str) -> EffectResult:
         after_count=len(after),
         noise_baseline=noise_baseline,
         mean_deviation=mean_deviation,
+        confidence=_confidence_level(len(before) + len(after)),
         prediction_line=prediction_line,
         actual_after=[ObservedPoint(captured_at=d, value=v) for d, v in after],
     )

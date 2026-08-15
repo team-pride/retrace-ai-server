@@ -48,26 +48,27 @@ def test_face_width_ratio():
     assert ratio == pytest.approx(2.0)  # 200px 폭 / IPD 100px
 
 
-def test_jaw_angle_deg_right_angle():
-    overrides = {8: (0.0, 0.0), 4: (-10.0, -10.0), 12: (10.0, -10.0)}
-    landmarks = _landmarks(overrides)
+def test_jaw_angle_deg_vertical_line_is_zero():
+    # 귀밑 기준점이 턱 끝 바로 위(수직선상)에 있으면 기울기 0도
+    landmarks = _landmarks({8: (0.0, 0.0), 2: (0.0, -20.0), 14: (0.0, -20.0)})
     angle = indicator_service._jaw_angle_deg(landmarks)
-    assert angle == pytest.approx(90.0)
+    assert angle == pytest.approx(0.0)
 
 
-def test_jaw_angle_deg_narrow_v_line_is_smaller():
-    wide = _landmarks({8: (0.0, 0.0), 4: (-20.0, -5.0), 12: (20.0, -5.0)})
-    narrow = _landmarks({8: (0.0, 0.0), 4: (-5.0, -20.0), 12: (5.0, -20.0)})
-    wide_angle = indicator_service._jaw_angle_deg(wide)
-    narrow_angle = indicator_service._jaw_angle_deg(narrow)
-    assert narrow_angle < wide_angle
+def test_jaw_angle_deg_wider_offset_is_larger():
+    # 귀밑 기준점이 턱 끝에서 옆으로 더 벌어져 있을수록(더 처진 형태) 기울기가 커진다
+    steep = _landmarks({8: (0.0, 0.0), 2: (-5.0, -20.0), 14: (5.0, -20.0)})
+    saggy = _landmarks({8: (0.0, 0.0), 2: (-15.0, -20.0), 14: (15.0, -20.0)})
+    steep_angle = indicator_service._jaw_angle_deg(steep)
+    saggy_angle = indicator_service._jaw_angle_deg(saggy)
+    assert saggy_angle > steep_angle
 
 
 def test_eyelid_height_ratio():
     landmarks = _landmarks(_eye_pair_landmarks(gap=10.0))
     ipd = indicator_service._interpupillary_distance(landmarks)
     ratio = indicator_service._eyelid_height_ratio(landmarks, ipd)
-    assert ratio == pytest.approx(0.1)  # 10px 개폐 / 100px IPD
+    assert ratio == pytest.approx(0.05)  # 위 눈꺼풀-눈 중심 수직 거리(5px) / IPD(100px)
 
 
 def test_mouth_corner_angle_deg_level():

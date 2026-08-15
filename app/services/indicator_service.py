@@ -122,30 +122,50 @@ def _face_width_ratio(landmarks: np.ndarray, ipd: float) -> float:
 
 
 def _jaw_angle_deg(landmarks: np.ndarray) -> float:
-    """턱 끝(8)을 꼭짓점으로 턱선 위쪽 두 점(4, 12)까지의 두 벡터가 이루는 각도(0~180도).
+    """귀밑 기준점(2, 14)에서 턱 끝(8)까지 이어지는 좌우 선의 기울기를 평균한다.
 
-    값이 작을수록 V라인(뾰족한 턱), 클수록 각지거나 둥근 턱에 가깝다.
+    기울기는 수직선 기준 각도로, 0도에 가까울수록 턱선이 가파르게(수직으로)
+    떨어지고, 90도에 가까울수록 옆으로 처진 형태다 (원본 문서 정의: "귀밑
+    기준점에서 턱 끝까지의 경사 각도").
+
+    이전 버전은 턱 끝을 꼭짓점으로 한 사잇각(V라인 각도)이었는데, 플로우
+    문서와 맞지 않아 "귀밑→턱끝 선의 기울기"로 수정했다. 귀밑 기준점으로
+    쓴 2/14번은 dlib 68점 표준 인덱스 중 귀에 가장 가까운 0/16번 바로
+    다음 점을 고른 1차 선택이라, 실제 사진으로 타당성 검증이 필요하다.
     """
     chin = landmarks[8]
-    left = landmarks[4]
-    right = landmarks[12]
-    v1 = left - chin
-    v2 = right - chin
-    denom = np.linalg.norm(v1) * np.linalg.norm(v2)
-    if denom == 0:
-        raise LandmarkDetectionError("턱선 각도를 계산할 수 없습니다.")
-    cos_angle = float(np.clip(np.dot(v1, v2) / denom, -1.0, 1.0))
-    return math.degrees(math.acos(cos_angle))
+    right_ear_below = landmarks[2]
+    left_ear_below = landmarks[14]
+
+    def _slope_from_vertical(p_from: np.ndarray, p_to: np.ndarray) -> float:
+        dx = p_to[0] - p_from[0]
+        dy = p_to[1] - p_from[1]
+        if dx == 0 and dy == 0:
+            raise LandmarkDetectionError("턱선 각도를 계산할 수 없습니다.")
+        return abs(math.degrees(math.atan2(dx, dy)))
+
+    right_slope = _slope_from_vertical(right_ear_below, chin)
+    left_slope = _slope_from_vertical(left_ear_below, chin)
+    return (right_slope + left_slope) / 2.0
 
 
 def _eyelid_height_ratio(landmarks: np.ndarray, ipd: float) -> float:
-    """양쪽 눈의 (윗꺼풀-아랫꺼풀) 수직 개폐 거리를 평균 내 IPD로 나눈 값."""
+    """위 눈꺼풀이 눈동자를 덮는 정도: 위 눈꺼풀 - 눈 중심(동공 근사) 수직 거리를
+    IPD로 정규화한 값의 양쪽 눈 평균 (원본 문서 정의: "눈을 뜬 상태에서 위
+    눈꺼풀과 동공 중심의 수직 거리").
+
+    dlib 68점에는 동공(눈동자) 랜드마크가 따로 없어서, 눈 윤곽 6점(36-41,
+    42-47)의 평균 위치를 동공 중심의 근사치로 쓴다. 이전 버전은 위/아래
+    눈꺼풀 사이 전체 개폐 거리(눈이 얼마나 크게 떠졌는지)였는데, 문서
+    정의와 달라 "위 눈꺼풀-눈 중심 거리"로 수정했다.
+    """
+    right_eye_center = landmarks[36:42].mean(axis=0)
+    left_eye_center = landmarks[42:48].mean(axis=0)
     right_upper = landmarks[[37, 38]].mean(axis=0)
-    right_lower = landmarks[[40, 41]].mean(axis=0)
     left_upper = landmarks[[43, 44]].mean(axis=0)
-    left_lower = landmarks[[46, 47]].mean(axis=0)
-    right_gap = np.linalg.norm(right_upper - right_lower)
-    left_gap = np.linalg.norm(left_upper - left_lower)
+    # "수직 거리"이므로 y축 차이만 사용한다 (좌우 방향 어긋남은 반영하지 않음).
+    right_gap = abs(right_upper[1] - right_eye_center[1])
+    left_gap = abs(left_upper[1] - left_eye_center[1])
     return float((right_gap + left_gap) / 2.0 / ipd)
 
 

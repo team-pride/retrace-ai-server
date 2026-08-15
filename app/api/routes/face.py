@@ -15,6 +15,8 @@ async def register_face(user_id: str, files: List[UploadFile] = File(...)):
     """본인 확인용 기준 얼굴 벡터 등록 (셀피 여러 장 -> 평균 벡터).
 
     원본 셀피 이미지는 저장하지 않고, 추출된 벡터만 저장한다.
+    업로드한 셀피들이 서로 다른 인물로 판정되면(임베딩 거리가 임계값 초과)
+    평균을 내지 않고 422로 거부한다.
     """
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="이미지가 필요합니다.")
@@ -34,6 +36,11 @@ async def register_face(user_id: str, files: List[UploadFile] = File(...)):
         except face_service.InvalidImageError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
         embeddings.append(embedding)
+
+    try:
+        face_service.check_same_person_embeddings(embeddings)
+    except face_service.DifferentPersonError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
     reference_vector = face_service.average_embeddings(embeddings)
     get_vector_store().save(user_id, reference_vector)
