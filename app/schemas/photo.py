@@ -21,3 +21,27 @@ class PhotoEvaluateResponse(BaseModel):
     attempt_count: int
     retries_remaining: int
     final_excluded: bool
+
+
+class PhotoEvaluateBatchItemResponse(BaseModel):
+    filename: str
+    photo_key: str
+    status: str  # "ok" | "skipped" | "failed"
+    reason: str | None = None
+    grade: str | None = None
+    reasons: list[str] | None = None
+    yaw_deg: float | None = None
+    pitch_deg: float | None = None
+    blur_variance: float | None = None
+    detector_confidence: float | None = None
+    attempt_count: int | None = None
+    retries_remaining: int | None = None
+    final_excluded: bool | None = None
+
+
+class PhotoEvaluateBatchResponse(BaseModel):
+    total_count: int
+    succeeded_count: int
+    skipped_count: int
+    failed_count: int
+    results: list[PhotoEvaluateBatchItemResponse]

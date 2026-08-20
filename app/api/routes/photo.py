@@ -3,7 +3,12 @@ import base64
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.core.config import settings
-from app.schemas.photo import PhotoEvaluateResponse, PhotoNormalizeResponse
+from app.schemas.photo import (
+    PhotoEvaluateBatchItemResponse,
+    PhotoEvaluateBatchResponse,
+    PhotoEvaluateResponse,
+    PhotoNormalizeResponse,
+)
 from app.services import face_service, normalization_service, photo_quality_service
 from app.services.retry_tracker import get_retry_tracker
 from app.services.vector_store import get_vector_store
@@ -78,21 +83,13 @@ async def normalize_photo(user_id: str | None = None, file: UploadFile = File(..
     )
 
 
-@router.post("/evaluate", response_model=PhotoEvaluateResponse)
-async def evaluate_photo(photo_key: str, user_id: str | None = None, file: UploadFile = File(...)):
-    """사진 판정 (우선순위 2).
+def _evaluate_one(photo_key: str, content: bytes, reference_vector: list[float] | None) -> PhotoEvaluateResponse:
+    """사진 한 장을 판정한다 (재시도 추적 포함). /evaluate와 /evaluate-batch가 공유하는 핵심 로직.
 
-    촬영 각도(좌우 yaw / 상하 pitch)/블러/얼굴 검출 신뢰도를 기준으로
-    pass / conditional / exclude 등급을 매긴다.
-
-    - photo_key: 재시도 횟수를 추적하는 단위 키. 예) "user123_2024-05_front"
-      같은 photo_key로 판정에 PHOTO_MAX_RETRY(기본 3)회 실패(exclude)하면
-      해당 사진은 최종 제외 처리된다.
-    - user_id: 넘기면 얼굴이 여러 명 잡혀도 등록된 본인 기준 벡터와 가장 가까운
-      얼굴을 골라서 판정하고(기능명세서 2.2), 그 얼굴마저 본인이 아니라고
-      판단되면 422로 거부한다. 생략하면 기존처럼 얼굴이 정확히 한 명이어야 한다.
+    face_service의 검출/본인 판정 예외는 여기서 잡지 않고 그대로 호출부로 올려보낸다.
+    단일 판정(/evaluate)에서는 HTTPException으로, 배치 판정(/evaluate-batch)에서는
+    해당 파일만 "failed"/"skipped"로 기록하는 식으로 호출부마다 다르게 처리하기 위해서다.
     """
-    reference_vector = _lookup_reference_vector(user_id)
     tracker = get_retry_tracker()
 
     if tracker.get_count(photo_key) >= settings.PHOTO_MAX_RETRY:
@@ -109,18 +106,7 @@ async def evaluate_photo(photo_key: str, user_id: str | None = None, file: Uploa
             final_excluded=True,
         )
 
-    content = await file.read()
-    try:
-        metrics = photo_quality_service.detect_and_measure(content, reference_vector=reference_vector)
-    except face_service.NoFaceDetectedError:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="얼굴을 찾지 못했습니다.")
-    except face_service.MultipleFacesDetectedError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
-    except face_service.PersonMismatchError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
-    except face_service.InvalidImageError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
-
+    metrics = photo_quality_service.detect_and_measure(content, reference_vector=reference_vector)
     result = photo_quality_service.grade_metrics(metrics)
 
     attempt_count = tracker.get_count(photo_key)
@@ -147,4 +133,114 @@ async def evaluate_photo(photo_key: str, user_id: str | None = None, file: Uploa
         attempt_count=attempt_count,
         retries_remaining=max(0, settings.PHOTO_MAX_RETRY - attempt_count),
         final_excluded=final_excluded,
+    )
+
+
+@router.post("/evaluate", response_model=PhotoEvaluateResponse)
+async def evaluate_photo(photo_key: str, user_id: str | None = None, file: UploadFile = File(...)):
+    """사진 판정 (우선순위 2).
+
+    촬영 각도(좌우 yaw / 상하 pitch)/블러/얼굴 검출 신뢰도를 기준으로
+    pass / conditional / exclude 등급을 매긴다.
+
+    - photo_key: 재시도 횟수를 추적하는 단위 키. 예) "user123_2024-05_front"
+      같은 photo_key로 판정에 PHOTO_MAX_RETRY(기본 3)회 실패(exclude)하면
+      해당 사진은 최종 제외 처리된다.
+    - user_id: 넘기면 얼굴이 여러 명 잡혀도 등록된 본인 기준 벡터와 가장 가까운
+      얼굴을 골라서 판정하고(기능명세서 2.2), 그 얼굴마저 본인이 아니라고
+      판단되면 422로 거부한다. 생략하면 기존처럼 얼굴이 정확히 한 명이어야 한다.
+    """
+    reference_vector = _lookup_reference_vector(user_id)
+    content = await file.read()
+
+    try:
+        return _evaluate_one(photo_key, content, reference_vector)
+    except face_service.NoFaceDetectedError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="얼굴을 찾지 못했습니다.")
+    except face_service.MultipleFacesDetectedError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except face_service.PersonMismatchError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except face_service.InvalidImageError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+@router.post("/evaluate-batch", response_model=PhotoEvaluateBatchResponse)
+async def evaluate_photo_batch(user_id: str | None = None, files: list[UploadFile] = File(...)):
+    """사진 판정 배치 버전 (우선순위 2). /evaluate 로직을 여러 장에 그대로 반복 적용한다.
+
+    한 번의 요청으로 여러 장을 판정해서 API 호출 횟수를 줄이는 것이 목적이다.
+    병렬 처리는 하지 않고 순차 처리한다. photo_key는 다른 배치 엔드포인트
+    (/indicator/extract-batch)와 동일하게 업로드 파일명을 그대로 사용한다.
+
+    사진 한 장이 실패해도 전체 요청을 실패시키지 않고, 파일별 결과(ok/skipped/failed)를
+    모아서 반환한다. 지원하지 않는 형식/손상된 파일은 "skipped", 얼굴 검출·본인 판정
+    실패는 "failed"로 구분한다.
+
+    - user_id: 넘기면 등록된 본인 기준 벡터로 본인 판정까지 함께 하고, 등록이
+      안 되어 있으면 404. 생략하면 얼굴이 정확히 한 명이어야 하는 기존 방식으로 판정한다.
+    """
+    reference_vector = _lookup_reference_vector(user_id)
+
+    results: list[PhotoEvaluateBatchItemResponse] = []
+
+    for upload in files:
+        filename = upload.filename or "unnamed"
+        photo_key = filename
+        content = await upload.read()
+
+        try:
+            single = _evaluate_one(photo_key, content, reference_vector)
+        except face_service.NoFaceDetectedError:
+            results.append(
+                PhotoEvaluateBatchItemResponse(
+                    filename=filename, photo_key=photo_key, status="failed", reason="얼굴을 찾지 못했습니다."
+                )
+            )
+            continue
+        except face_service.MultipleFacesDetectedError as exc:
+            results.append(
+                PhotoEvaluateBatchItemResponse(filename=filename, photo_key=photo_key, status="failed", reason=str(exc))
+            )
+            continue
+        except face_service.PersonMismatchError as exc:
+            results.append(
+                PhotoEvaluateBatchItemResponse(filename=filename, photo_key=photo_key, status="failed", reason=str(exc))
+            )
+            continue
+        except face_service.InvalidImageError as exc:
+            # 지원하지 않는 형식/손상된 파일: 판정 실패가 아니라 건너뛴 것으로 기록한다
+            # (기능명세서 2.1 문구 "건너뛰고 사유를 기록한다"에 맞춤 — /indicator/extract-batch와 동일 규칙).
+            results.append(
+                PhotoEvaluateBatchItemResponse(filename=filename, photo_key=photo_key, status="skipped", reason=str(exc))
+            )
+            continue
+
+        results.append(
+            PhotoEvaluateBatchItemResponse(
+                filename=filename,
+                photo_key=photo_key,
+                status="ok",
+                grade=single.grade,
+                reasons=single.reasons,
+                yaw_deg=single.yaw_deg,
+                pitch_deg=single.pitch_deg,
+                blur_variance=single.blur_variance,
+                detector_confidence=single.detector_confidence,
+                attempt_count=single.attempt_count,
+                retries_remaining=single.retries_remaining,
+                final_excluded=single.final_excluded,
+            )
+        )
+
+    succeeded_count = sum(1 for r in results if r.status == "ok")
+    skipped_count = sum(1 for r in results if r.status == "skipped")
+    failed_count = sum(1 for r in results if r.status == "failed")
+
+    return PhotoEvaluateBatchResponse(
+        total_count=len(results),
+        succeeded_count=succeeded_count,
+        skipped_count=skipped_count,
+        failed_count=failed_count,
+        results=results,
     )

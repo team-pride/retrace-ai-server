@@ -85,6 +85,7 @@ docker compose up --build
 | 1 | POST | `/api/v1/face/register?user_id={id}` | 셀피 여러 장 업로드 → 서로 다른 인물이 섞였는지 확인(임베딩 거리 임계값 초과 시 422) 후 평균 임베딩을 기준 벡터로 저장 (원본 이미지는 저장하지 않음) |
 | 1 | POST | `/api/v1/face/verify?user_id={id}` | 대조 사진 업로드 → 기준 벡터와 코사인 거리 비교 → 본인 여부 판정 |
 | 2 | POST | `/api/v1/photo/evaluate?photo_key={key}&user_id={id}` | 촬영 각도(좌우 yaw/상하 pitch)/블러/얼굴 검출 신뢰도로 pass/conditional/exclude 판정, 3회 실패 시 자동 최종 제외. `user_id`를 넘기면 얼굴이 여러 명 잡혀도 등록된 본인 기준 벡터와 가장 가까운 얼굴을 골라 판정하고, 본인이 아니면 422 |
+| 2 | POST | `/api/v1/photo/evaluate-batch?user_id={id}` | `/evaluate`를 여러 장에 순차 반복 적용하는 배치 버전 (병렬 처리는 안 함, API 호출 횟수만 줄이는 목적). photo_key는 업로드 파일명을 그대로 사용. 지원하지 않는 형식/손상 파일은 `skipped`, 얼굴 검출·본인 판정 실패는 `failed`로 구분 |
 | 3 | POST | `/api/v1/photo/normalize?user_id={id}` | 눈 중심선 수평 정렬 + 눈동자 간 거리 기준 크기 정렬 + 흰자 기준 색보정 → 표준 이미지(base64 PNG) 반환. 흰자 표본이 부족하면 색보정을 건너뛰고 `grade="conditional"`. `user_id`는 evaluate와 동일하게 다중 얼굴 중 본인 선택에 쓰인다 |
 | 4 | POST | `/api/v1/indicator/extract?user_id={id}&photo_key={key}&captured_at={YYYY-MM-DD}` | 사진 한 장에서 얼굴 폭/턱선 각도/눈꺼풀 높이/입가 각도 4종 지표를 계산해 저장. 등록된 기준 벡터가 선행조건(없으면 404)이며, 기준 벡터와 비교해 본인이 아니면 422 |
 | 4 | POST | `/api/v1/indicator/extract-batch?user_id={id}&fallback_captured_at={YYYY-MM-DD}` | 사진 여러 장을 한 번에 업로드 → 각 파일의 EXIF 촬영일을 자동으로 읽어 지표를 일괄 추출/저장. EXIF가 없는 파일은 `fallback_captured_at`을 쓰거나 건너뜀. 연도별 30장 초과분은 건너뛰고(`skipped`), 5장 미만인 연도는 `year_notices`로 안내(차단하지 않음). 지원하지 않는 형식/손상 파일은 `skipped`, 얼굴 검출·본인 판정 실패는 `failed`로 구분 |
